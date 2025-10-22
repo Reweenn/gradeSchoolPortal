@@ -91,6 +91,11 @@ export const loginUser = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("❌ Error in loginUser:", error);
-    res.status(500).json({ error: "Server error" });
+    // Log the full error details
+    console.error("Full error details:", {
+      error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    res.status(500).json({ error: "Server error", details: error instanceof Error ? error.message : String(error) });
   }
 };

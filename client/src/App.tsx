@@ -1,4 +1,9 @@
 import React, { useEffect, useState } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import ClientPage from "./pages/ClientPage";
+import AdminPage from "./pages/AdminPage";
+import StaffPage from "./pages/StaffPage";
 
 // Modes for the auth form
 type Mode = "login" | "register";
@@ -7,7 +12,9 @@ type Alert = { type: "success" | "error"; text: string } | null;
 
 const LOGO_URL = "/logo1.png"; // Updated to use client/public/logo1.png
 
-const App: React.FC = () => {
+const AuthForm: React.FC = () => {
+  const navigate = useNavigate();
+  const { login } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState<Alert>(null);
@@ -59,34 +66,75 @@ const App: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAlert(null);
 
     try {
       setLoading(true);
+      setAlert(null);
+      
       const url = mode === "register" ? `${API_BASE}/register` : `${API_BASE}/login`;
+      console.log('Mode:', mode);
+      
       const body =
         mode === "register"
           ? { name, email, password, grade: grade || undefined }
           : { email, password };
+      
+      console.log('Making request to:', url);
 
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
         body: JSON.stringify(body),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || data?.error || "Request failed");
+      // Get the response clone before attempting to read the body
+      const resClone = res.clone();
+      
+      let data;
+      try {
+        data = await res.json();
+        console.log('Response data:', data);
+      } catch (parseError) {
+        try {
+          // Try reading the cloned response as text if JSON parsing fails
+          const text = await resClone.text();
+          console.error('Server response (text):', text);
+          throw new Error('Server response was not in JSON format');
+        } catch (textError) {
+          console.error('Failed to read response:', textError);
+          throw new Error('Failed to read server response');
+        }
+      }
 
-      if (data?.token) localStorage.setItem("token", data.token);
+      if (!res.ok) {
+        const errorMessage = data?.message || data?.error || "Request failed";
+        console.error('Request failed:', errorMessage);
+        throw new Error(errorMessage);
+      }
 
-      setAlert({
-        type: "success",
-        text: mode === "register" ? "Registered successfully!" : "Login successful!",
-      });
-
-      if (mode === "register") setMode("login");
-      resetForm();
+      if (mode === "register") {
+        setAlert({
+          type: "success",
+          text: "Registered successfully! Please log in.",
+        });
+        setMode("login");
+        resetForm();
+      } else {
+        // Handle login success
+        if (data?.token) {
+          login(data.token);
+          navigate('/client');
+          setAlert({
+            type: "success",
+            text: "Login successful!",
+          });
+        } else {
+          throw new Error("No token received from server");
+        }
+      }
     } catch (err: any) {
       setAlert({ type: "error", text: err?.message || "Something went wrong" });
     } finally {
@@ -317,6 +365,61 @@ const App: React.FC = () => {
         Made with 💙 for curious young minds
       </footer>
     </div>
+  );
+};
+
+// Protected Route wrapper
+const ProtectedRoute: React.FC<{ 
+  children: React.ReactNode;
+  allowedRoles?: Array<'client' | 'admin' | 'staff'>;
+}> = ({ children, allowedRoles }) => {
+  const { isAuthenticated, userRole } = useAuth();
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (allowedRoles && userRole && !allowedRoles.includes(userRole)) {
+    // Redirect to appropriate dashboard if authenticated but wrong role
+    return <Navigate to={`/${userRole}`} replace />;
+  }
+
+  return <>{children}</>;
+};
+
+const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <Router>
+        <Routes>
+          <Route path="/" element={<AuthForm />} />
+          <Route 
+            path="/client" 
+            element={
+              <ProtectedRoute allowedRoles={['client']}>
+                <ClientPage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/admin" 
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminPage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/staff" 
+            element={
+              <ProtectedRoute allowedRoles={['staff']}>
+                <StaffPage />
+              </ProtectedRoute>
+            } 
+          />
+        </Routes>
+      </Router>
+    </AuthProvider>
   );
 };
 
